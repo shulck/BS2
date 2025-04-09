@@ -12,43 +12,25 @@ class FirebaseManager {
     static let shared = FirebaseManager()
     
     private(set) var isInitialized = false
-    private let initializationLock = NSLock()
     
     private init() {
         print("FirebaseManager: instance created")
-    }
-    
-    func initialize() {
-        print("FirebaseManager: attempting to initialize Firebase")
-        // Using lock for thread safety
-        initializationLock.lock()
-        print("FirebaseManager: lock acquired")
-        defer {
-            initializationLock.unlock()
-            print("FirebaseManager: lock released")
-        }
-        
-        if (!isInitialized) {
-            print("FirebaseManager: Firebase was not initialized, initializing")
-            do {
-                FirebaseApp.configure()
-                print("FirebaseManager: Firebase successfully initialized")
-                isInitialized = true
-            } catch let error {
-                print("FirebaseManager: ERROR initializing Firebase: \(error)")
-            }
-        } else {
-            print("FirebaseManager: Firebase was already initialized")
+        // Check if Firebase is already initialized
+        if FirebaseApp.app() != nil {
+            isInitialized = true
+            print("FirebaseManager: Firebase was already initialized by AppDelegate")
         }
     }
     
+    // This method won't initialize Firebase again if it's already initialized
+    // It will only ensure Firebase is initialized
     func ensureInitialized() {
         print("FirebaseManager: checking initialization")
-        if (!isInitialized) {
-            print("FirebaseManager: initialization required")
-            initialize()
+        if FirebaseApp.app() != nil {
+            isInitialized = true
+            print("FirebaseManager: Firebase is already initialized")
         } else {
-            print("FirebaseManager: already initialized")
+            print("FirebaseManager: WARNING - Firebase wasn't initialized in AppDelegate")
         }
     }
 }

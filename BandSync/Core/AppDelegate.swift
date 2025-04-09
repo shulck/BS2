@@ -14,10 +14,9 @@ class AppDelegate: NSObject, UIApplicationDelegate, MessagingDelegate, UNUserNot
     func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey : Any]? = nil) -> Bool {
         print("AppDelegate: initialization started")
         
-        // Firebase initialization through manager
-        print("AppDelegate: before Firebase initialization")
-        FirebaseManager.shared.initialize()
-        print("AppDelegate: after Firebase initialization")
+        // Single Firebase initialization - this is the only place to initialize Firebase
+        FirebaseApp.configure()
+        print("AppDelegate: Firebase initialized")
         
         // Notification setup
         UNUserNotificationCenter.current().delegate = self
@@ -121,5 +120,7 @@ class AppDelegate: NSObject, UIApplicationDelegate, MessagingDelegate, UNUserNot
     // Handle app returning to active state
     func applicationWillEnterForeground(_ application: UIApplication) {
         print("AppDelegate: app returning to active state")
+        // Update auth state when returning from background
+        AppState.shared.refreshAuthState()
     }
 }

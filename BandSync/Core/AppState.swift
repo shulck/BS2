@@ -2,7 +2,7 @@
 //  AppState.swift
 //  BandSync
 //
-//  Created by Claude AI on 04.04.2025.
+//  Created by Oleksandr Kuziakin on 31.03.2025.
 //
 
 import Foundation
@@ -11,215 +11,207 @@ import Combine
 
 final class AppState: ObservableObject {
     static let shared = AppState()
-    
+
     @Published var isLoggedIn = false
     @Published var user: UserModel?
     @Published var isLoading = false
-    
+    @Published var errorMessage: String?
+
     private var cancellables = Set<AnyCancellable>()
-    
+
     private init() {
+        print("AppState: initializing")
         refreshAuthState()
-        
-        // Подписка на события аутентификации Firebase
+
+        // Subscribe to Firebase auth state changes
         Auth.auth().addStateDidChangeListener { [weak self] _, user in
+            print("AppState: Firebase auth state changed, user: \(user?.uid ?? "nil")")
             self?.refreshAuthState()
         }
     }
-    
-    // Обновление состояния аутентификации
-    func refreshAuthState() {
+
+    // Refresh authentication state with debug logs and completion handler
+    func refreshAuthState(completion: (() -> Void)? = nil) {
+        print("AppState: refreshing auth state")
         isLoading = true
-        
+        errorMessage = nil
+
         if AuthService.shared.isUserLoggedIn(), let uid = AuthService.shared.currentUserUID() {
-            // Получение пользователя из Firestore
+            print("AppState: user is logged in with UID: \(uid)")
+            
+            // Get user from Firestore with improved error handling
             UserService.shared.fetchUser(uid: uid) { [weak self] result in
+                print("AppState: fetchUser completed")
+                
                 DispatchQueue.main.async {
                     self?.isLoading = false
-                    
+
                     switch result {
                     case .success(let user):
+                        print("AppState: user loaded, name: \(user.name), role: \(user.role.rawValue)")
                         self?.user = user
                         self?.isLoggedIn = true
-                    case .failure:
+
+                        // Additional debug log
+                        print("AppState: user loaded, groupId = \(user.groupId ?? "none")")
+
+                        // If user is in a group, load group information
+                        if let groupId = user.groupId {
+                            // Force group load
+                            print("AppState: starting group load for \(groupId)")
+                            GroupService.shared.fetchGroup(by: groupId)
+                        }
+                        
+                        completion?()
+
+                    case .failure(let error):
+                        print("AppState: error loading profile: \(error.localizedDescription)")
+                        self?.errorMessage = "Error loading profile: \(error.localizedDescription)"
                         self?.user = nil
                         self?.isLoggedIn = false
+                        completion?()
                     }
                 }
             }
         } else {
-            isLoading = false
-            user = nil
-            isLoggedIn = false
+            print("AppState: user is not logged in")
+            DispatchQueue.main.async {
+                self.isLoading = false
+                self.user = nil
+                self.isLoggedIn = false
+                completion?()
+            }
         }
     }
-    
-    // Выход из системы
+
+    // Logout with improved error handling
     func logout() {
+        print("AppState: logging out")
         isLoading = true
+        
         AuthService.shared.signOut { [weak self] result in
             DispatchQueue.main.async {
                 self?.isLoading = false
-                
+
                 switch result {
                 case .success:
+                    print("AppState: logout successful")
                     self?.user = nil
                     self?.isLoggedIn = false
-                case .failure:
-                    // Логирование ошибки если нужно
-                    break
+                case .failure(let error):
+                    print("AppState: logout error: \(error.localizedDescription)")
+                    self?.errorMessage = "Error logging out: \(error.localizedDescription)"
                 }
             }
         }
     }
-    
-    // Проверка, имеет ли пользователь права редактирования для модуля
+
+    // Check if user has edit permissions for module
     func hasEditPermission(for moduleId: ModuleType) -> Bool {
         guard let role = user?.role else {
             return false
         }
-        
-        // Только админы и менеджеры могут редактировать
+
+        // Only admins and managers can edit
         return role == .admin || role == .manager
     }
-}
 
-// Расширение AppState с методами для работы с группами
-extension AppState {
-    
-    // Проверка, является ли пользователь администратором группы
+    // Check if user is a group admin
     var isGroupAdmin: Bool {
         user?.role == .admin
     }
-    
-    // Проверка, имеет ли пользователь права менеджера группы
+
+    // Check if user has group manager rights
     var isGroupManager: Bool {
         user?.role == .admin || user?.role == .manager
     }
-    
-    // Проверка, имеет ли пользователь доступ к модулю
-    func canAccessModule(_ moduleType: ModuleType) -> Bool {
-        // Проверяем наличие доступа через PermissionService
-        return PermissionService.shared.currentUserHasAccess(to: moduleType)
-    }
-    
-    // Проверка, может ли пользователь создавать события
+
+    // Check if user can create events
     func canCreateEvents() -> Bool {
-        // Администраторы и менеджеры всегда могут
+        // Administrators and managers always can
         if isGroupManager {
             return true
         }
-        
-        // Проверка настроек группы, разрешают ли они обычным участникам создавать события
+
+        // Check group settings if they allow regular members to create events
         if let settings = GroupService.shared.group?.settings {
             return settings.allowMembersToCreateEvents
         }
-        
-        // По умолчанию запрещаем
+
+        // Default: deny
         return false
     }
-    
-    // Проверка, может ли пользователь создавать сетлисты
+
+    // Check if user can create setlists
     func canCreateSetlists() -> Bool {
-        // Администраторы и менеджеры всегда могут
+        // Administrators and managers always can
         if isGroupManager {
             return true
         }
-        
-        // Проверка настроек группы, разрешают ли они обычным участникам создавать сетлисты
+
+        // Check group settings if they allow regular members to create setlists
         if let settings = GroupService.shared.group?.settings {
             return settings.allowMembersToCreateSetlists
         }
-        
-        // По умолчанию запрещаем
+
+        // Default: deny
         return false
     }
-    
-    // Проверка, может ли пользователь приглашать других участников
+
+    // Check if user can invite other members
     func canInviteMembers() -> Bool {
-        // Администраторы и менеджеры всегда могут
+        // Administrators and managers always can
         if isGroupManager {
             return true
         }
-        
-        // Проверка настроек группы, разрешают ли они обычным участникам приглашать
+
+        // Check group settings if they allow regular members to invite
         if let settings = GroupService.shared.group?.settings {
             return settings.allowMembersToInvite
         }
-        
-        // По умолчанию запрещаем
+
+        // Default: deny
         return false
     }
-    
-    // Проверка, находится ли пользователь в группе
+
+    // Check if user is in a group
     var isInGroup: Bool {
         user?.groupId != nil
     }
-    
-    // Проверка, ожидает ли пользователь подтверждения присоединения к группе
+
+    // Check if user is waiting for group approval
     var isPendingGroupApproval: Bool {
         guard let groupId = user?.groupId,
               let userId = user?.id else {
             return false
         }
-        
-        // Проверяем, находится ли ID пользователя в списке pendingMembers группы
+
+        // Check if user ID is in the group's pendingMembers list
         if let pendingMembers = GroupService.shared.group?.pendingMembers {
             return pendingMembers.contains(userId)
         }
-        
+
         return false
     }
-    
-    // Проверка, является ли пользователь полноценным участником группы
+
+    // Check if user is a full member of the group
     var isActiveGroupMember: Bool {
         guard let groupId = user?.groupId,
               let userId = user?.id else {
             return false
         }
-        
-        // Проверяем, находится ли ID пользователя в списке members группы
+
+        // If group isn't loaded yet
+        if GroupService.shared.group == nil {
+            // Exception for admins - they're always active
+            return user?.role == .admin
+        }
+
+        // Check if user ID is in the group's members list
         if let members = GroupService.shared.group?.members {
             return members.contains(userId)
         }
-        
+
         return false
-    }
-    
-    // Покинуть текущую группу
-    func leaveCurrentGroup(completion: @escaping (Bool) -> Void) {
-        guard let userId = user?.id,
-              let groupId = user?.groupId else {
-            completion(false)
-            return
-        }
-        
-        isLoading = true
-        
-        // Используем GroupService для удаления пользователя из группы
-        GroupService.shared.removeUser(userId: userId) { [weak self] success in
-            if success {
-                // Если успешно удалили из группы, обновляем данные пользователя
-                UserService.shared.clearUserGroup { result in
-                    DispatchQueue.main.async {
-                        self?.isLoading = false
-                        
-                        switch result {
-                        case .success:
-                            // Обновляем состояние приложения
-                            self?.refreshAuthState()
-                            completion(true)
-                        case .failure:
-                            completion(false)
-                        }
-                    }
-                }
-            } else {
-                DispatchQueue.main.async {
-                    self?.isLoading = false
-                    completion(false)
-                }
-            }
-        }
     }
 }

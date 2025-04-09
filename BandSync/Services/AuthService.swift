@@ -21,42 +21,57 @@ final class AuthService {
     func registerUser(email: String, password: String, name: String, phone: String, completion: @escaping (Result<Void, Error>) -> Void) {
         print("AuthService: starting user registration with email \(email)")
         
-        // Make sure Firebase is initialized
+        // Check if Firebase is initialized (don't initialize)
         FirebaseManager.shared.ensureInitialized()
         
         auth.createUser(withEmail: email, password: password) { [weak self] result, error in
             if let error = error {
                 print("AuthService: error creating user: \(error.localizedDescription)")
-                completion(.failure(error))
+                DispatchQueue.main.async {
+                    completion(.failure(error))
+                }
                 return
             }
 
             guard let uid = result?.user.uid else {
                 print("AuthService: UID missing after user creation")
-                completion(.failure(NSError(domain: "UIDMissing", code: -1, userInfo: nil)))
+                let error = NSError(domain: "AuthService", code: -1, userInfo: [NSLocalizedDescriptionKey: "User UID is missing after successful registration"])
+                DispatchQueue.main.async {
+                    completion(.failure(error))
+                }
                 return
             }
             
             print("AuthService: user created with UID: \(uid)")
 
-            let userData: [String: Any] = [
-                "id": uid,
-                "email": email,
-                "name": name,
-                "phone": phone,
-                "groupId": NSNull(),
-                "role": "Member"
-            ]
+            let user = UserModel(
+                id: uid,
+                email: email,
+                name: name,
+                phone: phone,
+                groupId: nil,
+                role: .member
+            )
             
-            print("AuthService: saving user data: \(userData)")
-
-            self?.db.collection("users").document(uid).setData(userData) { error in
-                if let error = error {
-                    print("AuthService: error saving user data: \(error.localizedDescription)")
+            // Serialize model and save
+            do {
+                try self?.db.collection("users").document(uid).setData(from: user) { error in
+                    if let error = error {
+                        print("AuthService: error saving user data: \(error.localizedDescription)")
+                        DispatchQueue.main.async {
+                            completion(.failure(error))
+                        }
+                    } else {
+                        print("AuthService: user data successfully saved")
+                        DispatchQueue.main.async {
+                            completion(.success(()))
+                        }
+                    }
+                }
+            } catch {
+                print("AuthService: error serializing user data: \(error.localizedDescription)")
+                DispatchQueue.main.async {
                     completion(.failure(error))
-                } else {
-                    print("AuthService: user data successfully saved")
-                    completion(.success(()))
                 }
             }
         }
@@ -65,16 +80,43 @@ final class AuthService {
     func loginUser(email: String, password: String, completion: @escaping (Result<Void, Error>) -> Void) {
         print("AuthService: attempting to log in user with email \(email)")
         
-        // Make sure Firebase is initialized
+        // Check if Firebase is initialized (don't initialize)
         FirebaseManager.shared.ensureInitialized()
         
-        auth.signIn(withEmail: email, password: password) { _, error in
+        auth.signIn(withEmail: email, password: password) { [weak self] authResult, error in
             if let error = error {
                 print("AuthService: error logging in: \(error.localizedDescription)")
-                completion(.failure(error))
-            } else {
-                print("AuthService: user login successful")
-                completion(.success(()))
+                DispatchQueue.main.async {
+                    completion(.failure(error))
+                }
+                return
+            }
+            
+            guard let uid = authResult?.user.uid else {
+                print("AuthService: UID missing after login")
+                let error = NSError(domain: "AuthService", code: -1, userInfo: [NSLocalizedDescriptionKey: "User UID is missing after successful login"])
+                DispatchQueue.main.async {
+                    completion(.failure(error))
+                }
+                return
+            }
+            
+            print("AuthService: user login successful with UID: \(uid)")
+            
+            // After successful login, ensure user exists
+            UserService.shared.ensureUserExists(uid: uid, email: email) { result in
+                switch result {
+                case .success(let user):
+                    print("AuthService: user profile found/created: \(user.name), role: \(user.role.rawValue)")
+                    DispatchQueue.main.async {
+                        completion(.success(()))
+                    }
+                case .failure(let error):
+                    print("AuthService: error ensuring user exists: \(error.localizedDescription)")
+                    DispatchQueue.main.async {
+                        completion(.failure(error))
+                    }
+                }
             }
         }
     }
@@ -82,16 +124,20 @@ final class AuthService {
     func resetPassword(email: String, completion: @escaping (Result<Void, Error>) -> Void) {
         print("AuthService: sending password reset request for email \(email)")
         
-        // Make sure Firebase is initialized
+        // Check if Firebase is initialized (don't initialize)
         FirebaseManager.shared.ensureInitialized()
         
         auth.sendPasswordReset(withEmail: email) { error in
             if let error = error {
                 print("AuthService: error resetting password: \(error.localizedDescription)")
-                completion(.failure(error))
+                DispatchQueue.main.async {
+                    completion(.failure(error))
+                }
             } else {
                 print("AuthService: password reset request sent successfully")
-                completion(.success(()))
+                DispatchQueue.main.async {
+                    completion(.success(()))
+                }
             }
         }
     }
@@ -99,23 +145,27 @@ final class AuthService {
     func signOut(completion: @escaping (Result<Void, Error>) -> Void) {
         print("AuthService: attempting to log out user")
         
-        // Make sure Firebase is initialized
+        // Check if Firebase is initialized (don't initialize)
         FirebaseManager.shared.ensureInitialized()
         
         do {
             try auth.signOut()
             print("AuthService: user logout successful")
-            completion(.success(()))
+            DispatchQueue.main.async {
+                completion(.success(()))
+            }
         } catch {
             print("AuthService: error logging out: \(error.localizedDescription)")
-            completion(.failure(error))
+            DispatchQueue.main.async {
+                completion(.failure(error))
+            }
         }
     }
 
     func isUserLoggedIn() -> Bool {
         print("AuthService: checking user authorization")
         
-        // Make sure Firebase is initialized
+        // Check if Firebase is initialized (don't initialize)
         FirebaseManager.shared.ensureInitialized()
         
         let isLoggedIn = auth.currentUser != nil
@@ -126,11 +176,15 @@ final class AuthService {
     func currentUserUID() -> String? {
         print("AuthService: requesting current user UID")
         
-        // Make sure Firebase is initialized
+        // Check if Firebase is initialized (don't initialize)
         FirebaseManager.shared.ensureInitialized()
         
         let uid = auth.currentUser?.uid
-        print("AuthService: current user UID: \(uid ?? "missing")")
+        if let uid = uid {
+            print("AuthService: current user UID: \(uid)")
+        } else {
+            print("AuthService: current user UID is missing")
+        }
         return uid
     }
 }

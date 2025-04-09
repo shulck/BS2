@@ -5,7 +5,6 @@
 //  Created by Oleksandr Kuziakin on 31.03.2025.
 //
 
-
 import SwiftUI
 import LocalAuthentication
 
@@ -26,28 +25,40 @@ struct LoginView: View {
                     .keyboardType(.emailAddress)
                     .autocapitalization(.none)
                     .textFieldStyle(.roundedBorder)
+                    .disabled(viewModel.isLoading)
 
                 SecureField("Password", text: $viewModel.password)
                     .textContentType(.password)
                     .textFieldStyle(.roundedBorder)
+                    .disabled(viewModel.isLoading)
 
                 Button("Login") {
+                    print("Login button tapped")
                     viewModel.login()
                 }
                 .buttonStyle(.borderedProminent)
-                .disabled(viewModel.email.isEmpty || viewModel.password.isEmpty)
+                .disabled(viewModel.email.isEmpty || viewModel.password.isEmpty || viewModel.isLoading)
+
+                // Loading indicator
+                if viewModel.isLoading {
+                    ProgressView("Logging in...")
+                        .padding()
+                }
 
                 Button("Login with Face ID") {
                     authenticateWithFaceID()
                 }
+                .disabled(viewModel.isLoading)
 
                 Button("Forgot password?") {
                     showForgotPassword = true
                 }
                 .padding(.top, 5)
+                .disabled(viewModel.isLoading)
 
                 NavigationLink("Registration", destination: RegisterView())
                     .padding(.top)
+                    .disabled(viewModel.isLoading)
 
                 if let error = viewModel.errorMessage {
                     Text(error)
@@ -64,6 +75,16 @@ struct LoginView: View {
                 ForgotPasswordView()
             }
         }
+        .onAppear {
+            // Check if already logged in
+            if AuthService.shared.isUserLoggedIn() {
+                print("LoginView: User is already logged in")
+                viewModel.isAuthenticated = true
+                AppState.shared.refreshAuthState()
+            } else {
+                print("LoginView: User is not logged in")
+            }
+        }
     }
 
     private func authenticateWithFaceID() {
@@ -75,13 +96,16 @@ struct LoginView: View {
                 if success {
                     DispatchQueue.main.async {
                         viewModel.isAuthenticated = true
+                        AppState.shared.refreshAuthState()
                     }
-                } else {
+                } else if let error = error {
                     DispatchQueue.main.async {
-                        viewModel.errorMessage = "Face ID error"
+                        viewModel.errorMessage = "Face ID error: \(error.localizedDescription)"
                     }
                 }
             }
+        } else if let error = error {
+            viewModel.errorMessage = "Face ID not available: \(error.localizedDescription)"
         } else {
             viewModel.errorMessage = "Face ID not available"
         }
