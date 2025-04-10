@@ -4,74 +4,73 @@ struct MainTabView: View {
     @StateObject private var appState = AppState.shared
     @StateObject private var permissionService = PermissionService.shared
     @State private var selectedTab = 0
-    @State private var showMoreMenu = false
     
     var body: some View {
         TabView(selection: $selectedTab) {
-            // Main tabs (always visible)
+            // Main tabs (всегда видимые)
             
-            // 1. Calendar
+            // 1. Календарь
             if permissionService.currentUserHasAccess(to: .calendar) {
                 CalendarView()
                     .tabItem {
-                        Label("Calendar", systemImage: "calendar")
+                        Label("Календарь", systemImage: "calendar")
                     }
                     .tag(0)
             }
             
-            // 2. Finances
+            // 2. Финансы
             if permissionService.currentUserHasAccess(to: .finances) {
                 FinancesView()
                     .tabItem {
-                        Label("Finances", systemImage: "dollarsign.circle")
+                        Label("Финансы", systemImage: "dollarsign.circle")
                     }
                     .tag(1)
             }
             
-            // 3. Merch
+            // 3. Мерч
             if permissionService.currentUserHasAccess(to: .merchandise) {
                 MerchView()
                     .tabItem {
-                        Label("Merch", systemImage: "bag")
+                        Label("Мерч", systemImage: "bag")
                     }
                     .tag(2)
             }
             
-            // 4. Chats
+            // 4. Чаты
             if permissionService.currentUserHasAccess(to: .chats) {
                 ChatsView()
                     .tabItem {
-                        Label("Chats", systemImage: "message")
+                        Label("Чаты", systemImage: "message")
                     }
                     .tag(3)
             }
             
-            // 5. More
+            // 5. Еще
             MoreMenuView()
                 .tabItem {
-                    Label("More", systemImage: "ellipsis")
+                    Label("Еще", systemImage: "ellipsis")
                 }
                 .tag(4)
         }
         .onAppear {
             appState.refreshAuthState()
             
-            // If the current tab is unavailable, switch to the first available one
+            // Если текущая вкладка недоступна, переключаемся на первую доступную
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
                 ensureValidTab()
             }
         }
         .onChange(of: permissionService.permissions) { _ in
-            // When permissions change, check that the current tab is available
+            // При изменении разрешений проверяем, что текущая вкладка доступна
             ensureValidTab()
         }
     }
     
-    // Ensures that an accessible tab is selected
+    // Убеждаемся, что выбрана доступная вкладка
     private func ensureValidTab() {
         let modules = permissionService.getCurrentUserAccessibleModules()
         
-        // Check if user has access to the current tab
+        // Проверяем доступ к текущей вкладке
         var isCurrentTabAccessible = false
         
         switch selectedTab {
@@ -79,16 +78,16 @@ struct MainTabView: View {
         case 1: isCurrentTabAccessible = modules.contains(.finances)
         case 2: isCurrentTabAccessible = modules.contains(.merchandise)
         case 3: isCurrentTabAccessible = modules.contains(.chats)
-        case 4: isCurrentTabAccessible = true // More menu always available
+        case 4: isCurrentTabAccessible = true // Меню "Еще" всегда доступно
         default: isCurrentTabAccessible = false
         }
         
-        // If current tab is inaccessible, select the first available one
+        // Если текущая вкладка недоступна, выбираем первую доступную
         if !isCurrentTabAccessible {
-            // By default, the More tab should always be accessible
+            // По умолчанию вкладка "Еще" должна быть всегда доступна
             selectedTab = 4
             
-            // Check availability of other tabs by priority
+            // Проверяем доступность других вкладок по приоритету
             if modules.contains(.calendar) {
                 selectedTab = 0
             } else if modules.contains(.finances) {
@@ -102,48 +101,47 @@ struct MainTabView: View {
     }
 }
 
-// View for the "More" menu
+// Представление для меню "Еще"
 struct MoreMenuView: View {
     @StateObject private var permissionService = PermissionService.shared
-    @State private var selectedOption: String? = nil
     
     var body: some View {
         NavigationView {
             List {
-                // Setlists
+                // Сетлисты
                 if permissionService.currentUserHasAccess(to: .setlists) {
                     NavigationLink(destination: SetlistView()) {
-                        Label("Setlists", systemImage: "music.note.list")
+                        Label("Сетлисты", systemImage: "music.note.list")
                     }
                 }
                 
-                // Tasks
+                // Задачи
                 if permissionService.currentUserHasAccess(to: .tasks) {
                     NavigationLink(destination: TasksView()) {
-                        Label("Tasks", systemImage: "checklist")
+                        Label("Задачи", systemImage: "checklist")
                     }
                 }
                 
-                // Contacts
+                // Контакты
                 if permissionService.currentUserHasAccess(to: .contacts) {
                     NavigationLink(destination: ContactsView()) {
-                        Label("Contacts", systemImage: "person.crop.circle")
+                        Label("Контакты", systemImage: "person.crop.circle")
                     }
                 }
                 
-                // Settings (available to everyone)
+                // Настройки (доступны всем)
                 NavigationLink(destination: SettingsView()) {
-                    Label("Settings", systemImage: "gear")
+                    Label("Настройки", systemImage: "gear")
                 }
                 
-                // Admin panel
+                // Админ-панель
                 if permissionService.currentUserHasAccess(to: .admin) {
                     NavigationLink(destination: AdminPanelView()) {
-                        Label("Admin", systemImage: "person.3")
+                        Label("Админ", systemImage: "person.3")
                     }
                 }
             }
-            .navigationTitle("More")
+            .navigationTitle("Еще")
             .listStyle(InsetGroupedListStyle())
         }
     }

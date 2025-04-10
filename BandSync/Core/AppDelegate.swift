@@ -12,115 +12,132 @@ import UserNotifications
 
 class AppDelegate: NSObject, UIApplicationDelegate, MessagingDelegate, UNUserNotificationCenterDelegate {
     func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey : Any]? = nil) -> Bool {
-        print("AppDelegate: initialization started")
-        
-        // Single Firebase initialization - this is the only place to initialize Firebase
+        // Инициализация Firebase
         FirebaseApp.configure()
-        print("AppDelegate: Firebase initialized")
         
-        // Notification setup
+        // Настройка делегата уведомлений
         UNUserNotificationCenter.current().delegate = self
-        print("AppDelegate: notification delegate set")
         
-        // Firebase Messaging setup
+        // Настройка Firebase Messaging
         Messaging.messaging().delegate = self
-        print("AppDelegate: Messaging delegate set")
         
-        // Request notification permission
+        // Запрос разрешения на уведомления
         requestNotificationAuthorization()
         
-        print("AppDelegate: initialization completed")
+        // Регистрация для удалённых уведомлений
+        application.registerForRemoteNotifications()
+        
         return true
     }
     
-    // Request notification permissions
+    // Запрос разрешения на уведомления
     private func requestNotificationAuthorization() {
-        print("AppDelegate: requesting notification permission")
         let authOptions: UNAuthorizationOptions = [.alert, .badge, .sound]
         UNUserNotificationCenter.current().requestAuthorization(
             options: authOptions,
             completionHandler: { granted, error in
-                print("AppDelegate: notification permission \(granted ? "granted" : "denied")")
                 if let error = error {
-                    print("AppDelegate: permission request error: \(error)")
+                    print("AppDelegate: ошибка запроса разрешения уведомлений: \(error)")
+                } else {
+                    print("AppDelegate: разрешение на уведомления \(granted ? "получено" : "отклонено")")
                 }
             }
         )
-        
-        UIApplication.shared.registerForRemoteNotifications()
-        print("AppDelegate: registration for remote notifications requested")
     }
     
-    // Get FCM device token
+    // Получение FCM токена устройства
     func messaging(_ messaging: Messaging, didReceiveRegistrationToken fcmToken: String?) {
         if let token = fcmToken {
-            print("AppDelegate: FCM token received: \(token)")
-        } else {
-            print("AppDelegate: failed to get FCM token")
+            print("AppDelegate: FCM токен получен: \(token)")
+            // Здесь можно сохранить токен на сервере или в пользовательском профиле
         }
     }
     
-    // Receive remote notifications when app is in foreground
+    // Прием удаленных уведомлений, когда приложение открыто
     func userNotificationCenter(
         _ center: UNUserNotificationCenter,
         willPresent notification: UNNotification,
         withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
     ) {
-        print("AppDelegate: notification received in foreground")
-        // Show notification even if app is open
+        // Показать уведомление, даже если приложение открыто
         completionHandler([.banner, .sound, .badge])
     }
     
-    // Handle notification tap
+    // Обработка нажатия на уведомление
     func userNotificationCenter(
         _ center: UNUserNotificationCenter,
         didReceive response: UNNotificationResponse,
         withCompletionHandler completionHandler: @escaping () -> Void
     ) {
         let userInfo = response.notification.request.content.userInfo
-        print("AppDelegate: notification tap received: \(userInfo)")
+        
+        // Обработка данных уведомления
+        if let type = userInfo["type"] as? String {
+            switch type {
+            case "event":
+                // Навигация к событию
+                if let eventId = userInfo["eventId"] as? String {
+                    print("AppDelegate: нажатие на уведомление о событии: \(eventId)")
+                    // Здесь код для навигации к событию
+                }
+            case "task":
+                // Навигация к задаче
+                if let taskId = userInfo["taskId"] as? String {
+                    print("AppDelegate: нажатие на уведомление о задаче: \(taskId)")
+                    // Здесь код для навигации к задаче
+                }
+            case "message":
+                // Навигация к сообщению
+                if let chatId = userInfo["chatId"] as? String {
+                    print("AppDelegate: нажатие на уведомление о сообщении: \(chatId)")
+                    // Здесь код для навигации к чату
+                }
+            default:
+                break
+            }
+        }
         
         completionHandler()
     }
     
-    // Get device token for remote notifications
+    // Получение токена устройства для удаленных уведомлений
     func application(
         _ application: UIApplication,
         didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data
     ) {
         let tokenParts = deviceToken.map { data in String(format: "%02.2hhx", data) }
         let token = tokenParts.joined()
-        print("AppDelegate: device token for remote notifications received: \(token)")
+        print("AppDelegate: токен устройства для удаленных уведомлений: \(token)")
         Messaging.messaging().apnsToken = deviceToken
     }
     
-    // Handle remote notification registration error
+    // Обработка ошибки регистрации удаленных уведомлений
     func application(
         _ application: UIApplication,
         didFailToRegisterForRemoteNotificationsWithError error: Error
     ) {
-        print("AppDelegate: failed to register for remote notifications: \(error.localizedDescription)")
+        print("AppDelegate: ошибка регистрации удаленных уведомлений: \(error.localizedDescription)")
     }
     
-    // Handle URL opening
+    // Обработка URL открытия
     func application(
         _ app: UIApplication,
         open url: URL,
         options: [UIApplication.OpenURLOptionsKey : Any] = [:]
     ) -> Bool {
-        print("AppDelegate: app opened via URL: \(url)")
+        print("AppDelegate: приложение открыто по URL: \(url)")
         return true
     }
     
-    // Handle app entering background mode
+    // Обработка входа приложения в фоновый режим
     func applicationDidEnterBackground(_ application: UIApplication) {
-        print("AppDelegate: app entered background mode")
+        print("AppDelegate: приложение перешло в фоновый режим")
     }
     
-    // Handle app returning to active state
+    // Обработка возвращения приложения в активное состояние
     func applicationWillEnterForeground(_ application: UIApplication) {
-        print("AppDelegate: app returning to active state")
-        // Update auth state when returning from background
+        print("AppDelegate: приложение возвращается в активное состояние")
+        // Обновить состояние авторизации при возвращении из фонового режима
         AppState.shared.refreshAuthState()
     }
 }

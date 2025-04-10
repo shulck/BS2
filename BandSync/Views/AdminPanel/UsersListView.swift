@@ -1,11 +1,3 @@
-//
-//  UsersListView.swift
-//  BandSync
-//
-//  Created by Oleksandr Kuziakin on 31.03.2025.
-//  Updated by Claude AI on 10.04.2025.
-//
-
 import SwiftUI
 
 struct UsersListView: View {
@@ -25,9 +17,9 @@ struct UsersListView: View {
                     Spacer()
                 }
             } else {
-                // Group members
+                // Секция с активными участниками
                 if !groupService.groupMembers.isEmpty {
-                    Section(header: Text("Members")) {
+                    Section(header: Text("Участники")) {
                         ForEach(groupService.groupMembers) { user in
                             HStack {
                                 VStack(alignment: .leading) {
@@ -36,30 +28,33 @@ struct UsersListView: View {
                                     Text(user.email)
                                         .font(.caption)
                                         .foregroundColor(.gray)
-                                    Text("Role: \(user.role.rawValue)")
+                                    Text("Роль: \(user.role.rawValue)")
                                         .font(.caption)
                                         .foregroundColor(.secondary)
                                 }
                                 
                                 Spacer()
                                 
-                                // Action buttons
+                                // Кнопки действий
                                 if user.id != AppState.shared.user?.id {
                                     Menu {
-                                        Button("Change role") {
+                                        Button("Изменить роль") {
                                             selectedUserId = user.id
                                             showingRoleView = true
                                         }
                                         
-                                        Button("Remove from group", role: .destructive) {
-                                            confirmRemoveUser(user)
+                                        Button("Удалить из группы", role: .destructive) {
+                                            alertTitle = "Удалить пользователя"
+                                            alertMessage = "Вы уверены, что хотите удалить \(user.name) из группы?"
+                                            selectedUserId = user.id
+                                            showAlert = true
                                         }
                                     } label: {
                                         Image(systemName: "ellipsis.circle")
                                     }
                                 } else {
                                     // Метка для текущего пользователя
-                                    Text("You")
+                                    Text("Вы")
                                         .font(.caption)
                                         .padding(4)
                                         .background(Color.blue.opacity(0.2))
@@ -70,19 +65,9 @@ struct UsersListView: View {
                     }
                 }
                 
-                // Отображение информации о последнем админе
-                let adminCount = groupService.groupMembers.filter { $0.role == .admin }.count
-                if adminCount <= 1 {
-                    Section {
-                        Text("Внимание: В группе должен быть хотя бы один администратор.")
-                            .font(.caption)
-                            .foregroundColor(.orange)
-                    }
-                }
-                
-                // Pending approvals
+                // Секция с ожидающими подтверждения
                 if !groupService.pendingMembers.isEmpty {
-                    Section(header: Text("Awaiting approval")) {
+                    Section(header: Text("Ожидают подтверждения")) {
                         ForEach(groupService.pendingMembers) { user in
                             HStack {
                                 VStack(alignment: .leading) {
@@ -95,18 +80,18 @@ struct UsersListView: View {
                                 
                                 Spacer()
                                 
-                                // Accept/reject buttons
+                                // Кнопки принять/отклонить
                                 Button {
                                     groupService.approveUser(userId: user.id)
                                 } label: {
-                                    Text("Accept")
+                                    Text("Принять")
                                         .foregroundColor(.green)
                                 }
                                 
                                 Button {
                                     groupService.rejectUser(userId: user.id)
                                 } label: {
-                                    Text("Decline")
+                                    Text("Отклонить")
                                         .foregroundColor(.red)
                                 }
                             }
@@ -114,9 +99,9 @@ struct UsersListView: View {
                     }
                 }
                 
-                // Invitation code
+                // Код приглашения
                 if let group = groupService.group {
-                    Section(header: Text("Invitation code")) {
+                    Section(header: Text("Код приглашения")) {
                         HStack {
                             Text(group.code)
                                 .font(.system(.title3, design: .monospaced))
@@ -126,14 +111,18 @@ struct UsersListView: View {
                             
                             Button {
                                 UIPasteboard.general.string = group.code
-                                showCopiedAlert()
+                                alertTitle = "Успех"
+                                alertMessage = "Код скопирован в буфер обмена"
+                                showAlert = true
                             } label: {
                                 Image(systemName: "doc.on.doc")
                             }
                         }
                         
-                        Button("Generate new code") {
-                            confirmRegenerateCode()
+                        Button("Создать новый код") {
+                            alertTitle = "Обновить код"
+                            alertMessage = "Создание нового кода сделает текущий недействительным. Вы уверены?"
+                            showAlert = true
                         }
                     }
                 }
@@ -146,7 +135,7 @@ struct UsersListView: View {
                 }
             }
         }
-        .navigationTitle("Group members")
+        .navigationTitle("Участники группы")
         .onAppear {
             if let gid = AppState.shared.user?.groupId {
                 groupService.fetchGroup(by: gid)
@@ -161,57 +150,36 @@ struct UsersListView: View {
             }
         }
         .alert(isPresented: $showAlert) {
-            Alert(
-                title: Text(alertTitle),
-                message: Text(alertMessage),
-                primaryButton: .destructive(Text("Confirm")) {
-                    if alertTitle == "Remove User" {
-                        removeUser(selectedUserId)
-                    } else if alertTitle == "Regenerate Code" {
+            if alertTitle == "Удалить пользователя" {
+                return Alert(
+                    title: Text(alertTitle),
+                    message: Text(alertMessage),
+                    primaryButton: .destructive(Text("Удалить")) {
+                        groupService.removeUser(userId: selectedUserId)
+                    },
+                    secondaryButton: .cancel()
+                )
+            } else if alertTitle == "Обновить код" {
+                return Alert(
+                    title: Text(alertTitle),
+                    message: Text(alertMessage),
+                    primaryButton: .destructive(Text("Обновить")) {
                         groupService.regenerateCode()
-                    }
-                },
-                secondaryButton: .cancel()
-            )
-        }
-    }
-    
-    // Подтверждение удаления пользователя
-    private func confirmRemoveUser(_ user: UserModel) {
-        selectedUserId = user.id
-        alertTitle = "Remove User"
-        alertMessage = "Are you sure you want to remove \(user.name) from the group?"
-        showAlert = true
-    }
-    
-    // Подтверждение смены кода
-    private func confirmRegenerateCode() {
-        alertTitle = "Regenerate Code"
-        alertMessage = "Creating a new code will invalidate the current one. Are you sure?"
-        showAlert = true
-    }
-    
-    // Удаление пользователя с обработкой ошибок
-    private func removeUser(_ userId: String) {
-        groupService.removeUser(userId: userId) { success in
-            if !success {
-                // Показываем сообщение об ошибке
-                alertTitle = "Error"
-                alertMessage = "Failed to remove user. Please try again."
-                showAlert = true
+                    },
+                    secondaryButton: .cancel()
+                )
+            } else {
+                return Alert(
+                    title: Text(alertTitle),
+                    message: Text(alertMessage),
+                    dismissButton: .default(Text("OK"))
+                )
             }
         }
     }
-    
-    // Показать алерт о копировании кода
-    private func showCopiedAlert() {
-        alertTitle = "Success"
-        alertMessage = "Invitation code copied to clipboard"
-        showAlert = true
-    }
 }
 
-// Role selection view
+// Представление для выбора роли
 struct RoleSelectionView: View {
     let userId: String
     @StateObject private var groupService = GroupService.shared
@@ -221,7 +189,7 @@ struct RoleSelectionView: View {
     var body: some View {
         NavigationView {
             Form {
-                Section(header: Text("Select a role")) {
+                Section(header: Text("Выберите роль")) {
                     ForEach(UserModel.UserRole.allCases, id: \.self) { role in
                         Button {
                             selectedRole = role
@@ -240,64 +208,21 @@ struct RoleSelectionView: View {
                         .foregroundColor(.primary)
                     }
                 }
-                
-                // Выводим предупреждение, если пытаемся изменить роль последнего админа
-                if isLastAdmin() && selectedRole != .admin {
-                    Section {
-                        Text("This is the last administrator. You must maintain at least one admin in the group.")
-                            .foregroundColor(.red)
-                    }
-                }
-                
-                if groupService.isLoading {
-                    Section {
-                        HStack {
-                            Spacer()
-                            ProgressView()
-                            Spacer()
-                        }
-                    }
-                }
-                
-                if let error = groupService.errorMessage {
-                    Section {
-                        Text(error)
-                            .foregroundColor(.red)
-                    }
-                }
             }
-            .navigationTitle("Change role")
+            .navigationTitle("Изменить роль")
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") {
+                    Button("Отмена") {
                         dismiss()
                     }
                 }
             }
-        }
-        .onAppear {
-            // Try to find the user's current role
-            if let user = groupService.groupMembers.first(where: { $0.id == userId }) {
-                selectedRole = user.role
+            .onAppear {
+                // Находим текущую роль пользователя
+                if let user = groupService.groupMembers.first(where: { $0.id == userId }) {
+                    selectedRole = user.role
+                }
             }
         }
-        .onDisappear {
-            // Обновляем группу при закрытии формы
-            if let groupId = AppState.shared.user?.groupId {
-                groupService.fetchGroup(by: groupId)
-            }
-        }
-    }
-    
-    // Проверяем, является ли пользователь последним админом
-    private func isLastAdmin() -> Bool {
-        let user = groupService.groupMembers.first(where: { $0.id == userId })
-        if user?.role == .admin {
-            let adminCount = groupService.groupMembers.filter { $0.role == .admin }.count
-            if adminCount <= 1 {
-                return true
-            }
-        }
-        return false
     }
 }

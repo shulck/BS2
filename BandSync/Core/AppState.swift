@@ -7,6 +7,7 @@
 
 import Foundation
 import FirebaseAuth
+import FirebaseFirestore
 import Combine
 
 final class AppState: ObservableObject {
@@ -16,57 +17,59 @@ final class AppState: ObservableObject {
     @Published var user: UserModel?
     @Published var isLoading = false
     @Published var errorMessage: String?
+    @Published var lastRefresh: Date = Date()
 
     private var cancellables = Set<AnyCancellable>()
+    private let db = Firestore.firestore()
 
     private init() {
-        print("AppState: initializing")
+        print("AppState: инициализация")
         refreshAuthState()
 
-        // Subscribe to Firebase auth state changes
+        // Подписка на изменения состояния аутентификации Firebase
         Auth.auth().addStateDidChangeListener { [weak self] _, user in
-            print("AppState: Firebase auth state changed, user: \(user?.uid ?? "nil")")
+            print("AppState: состояние аутентификации Firebase изменилось, пользователь: \(user?.uid ?? "nil")")
             self?.refreshAuthState()
         }
     }
 
-    // Refresh authentication state with debug logs and completion handler
+    // Обновление состояния аутентификации с улучшенной обработкой ошибок
     func refreshAuthState(completion: (() -> Void)? = nil) {
-        print("AppState: refreshing auth state")
+        print("AppState: обновление состояния аутентификации")
         isLoading = true
         errorMessage = nil
 
         if AuthService.shared.isUserLoggedIn(), let uid = AuthService.shared.currentUserUID() {
-            print("AppState: user is logged in with UID: \(uid)")
+            print("AppState: пользователь авторизован с UID: \(uid)")
             
-            // Get user from Firestore with improved error handling
+            // Получение пользователя из Firestore
             UserService.shared.fetchUser(uid: uid) { [weak self] result in
-                print("AppState: fetchUser completed")
+                print("AppState: fetchUser завершен")
                 
                 DispatchQueue.main.async {
                     self?.isLoading = false
 
                     switch result {
                     case .success(let user):
-                        print("AppState: user loaded, name: \(user.name), role: \(user.role.rawValue)")
+                        print("AppState: пользователь загружен, имя: \(user.name), роль: \(user.role.rawValue)")
                         self?.user = user
                         self?.isLoggedIn = true
+                        self?.lastRefresh = Date()
 
-                        // Additional debug log
-                        print("AppState: user loaded, groupId = \(user.groupId ?? "none")")
-
-                        // If user is in a group, load group information
+                        // Если пользователь в группе, загружаем информацию о группе
                         if let groupId = user.groupId {
-                            // Force group load
-                            print("AppState: starting group load for \(groupId)")
+                            print("AppState: загрузка группы \(groupId)")
                             GroupService.shared.fetchGroup(by: groupId)
+                            
+                            // Загружаем разрешения для группы
+                            PermissionService.shared.fetchPermissions(for: groupId)
                         }
                         
                         completion?()
 
                     case .failure(let error):
-                        print("AppState: error loading profile: \(error.localizedDescription)")
-                        self?.errorMessage = "Error loading profile: \(error.localizedDescription)"
+                        print("AppState: ошибка загрузки профиля: \(error.localizedDescription)")
+                        self?.errorMessage = "Ошибка загрузки профиля: \(error.localizedDescription)"
                         self?.user = nil
                         self?.isLoggedIn = false
                         completion?()
@@ -74,7 +77,7 @@ final class AppState: ObservableObject {
                 }
             }
         } else {
-            print("AppState: user is not logged in")
+            print("AppState: пользователь не авторизован")
             DispatchQueue.main.async {
                 self.isLoading = false
                 self.user = nil
@@ -84,9 +87,9 @@ final class AppState: ObservableObject {
         }
     }
 
-    // Logout with improved error handling
+    // Выход из аккаунта с улучшенной обработкой ошибок
     func logout() {
-        print("AppState: logging out")
+        print("AppState: выход из аккаунта")
         isLoading = true
         
         AuthService.shared.signOut { [weak self] result in
@@ -95,86 +98,90 @@ final class AppState: ObservableObject {
 
                 switch result {
                 case .success:
-                    print("AppState: logout successful")
+                    print("AppState: выход выполнен успешно")
                     self?.user = nil
                     self?.isLoggedIn = false
                 case .failure(let error):
-                    print("AppState: logout error: \(error.localizedDescription)")
-                    self?.errorMessage = "Error logging out: \(error.localizedDescription)"
+                    print("AppState: ошибка выхода: \(error.localizedDescription)")
+                    self?.errorMessage = "Ошибка выхода из аккаунта: \(error.localizedDescription)"
+                    
+                    // Принудительно выходим даже при ошибке
+                    self?.user = nil
+                    self?.isLoggedIn = false
                 }
             }
         }
     }
 
-    // Check if user has edit permissions for module
+    // Проверка наличия прав редактирования для модуля
     func hasEditPermission(for moduleId: ModuleType) -> Bool {
         guard let role = user?.role else {
             return false
         }
 
-        // Only admins and managers can edit
+        // Только администраторы и менеджеры могут редактировать
         return role == .admin || role == .manager
     }
 
-    // Check if user is a group admin
+    // Проверка, является ли пользователь администратором группы
     var isGroupAdmin: Bool {
         user?.role == .admin
     }
 
-    // Check if user has group manager rights
+    // Проверка наличия у пользователя прав управления группой
     var isGroupManager: Bool {
         user?.role == .admin || user?.role == .manager
     }
 
-    // Check if user can create events
+    // Проверка, может ли пользователь создавать события
     func canCreateEvents() -> Bool {
-        // Administrators and managers always can
+        // Администраторы и менеджеры всегда могут
         if isGroupManager {
             return true
         }
 
-        // Check group settings if they allow regular members to create events
+        // Проверка настроек группы, разрешающих обычным участникам создавать события
         if let settings = GroupService.shared.group?.settings {
             return settings.allowMembersToCreateEvents
         }
 
-        // Default: deny
+        // По умолчанию: запрещено
         return false
     }
 
-    // Check if user can create setlists
+    // Проверка, может ли пользователь создавать сетлисты
     func canCreateSetlists() -> Bool {
-        // Administrators and managers always can
+        // Администраторы и менеджеры всегда могут
         if isGroupManager {
             return true
         }
 
-        // Check group settings if they allow regular members to create setlists
+        // Проверка настроек группы, разрешающих обычным участникам создавать сетлисты
         if let settings = GroupService.shared.group?.settings {
             return settings.allowMembersToCreateSetlists
         }
 
-        // Default: deny
+        // По умолчанию: запрещено
         return false
     }
 
-    // Check if user can invite other members
+    // Проверка, может ли пользователь приглашать других участников
     func canInviteMembers() -> Bool {
-        // Administrators and managers always can
+        // Администраторы и менеджеры всегда могут
         if isGroupManager {
             return true
         }
 
-        // Check group settings if they allow regular members to invite
+        // Проверка настроек группы, разрешающих обычным участникам приглашать
         if let settings = GroupService.shared.group?.settings {
             return settings.allowMembersToInvite
         }
 
-        // Default: deny
+        // По умолчанию: запрещено
         return false
     }
 
-    // Check if user is in a group
+    // Проверка, состоит ли пользователь в группе
     var isInGroup: Bool {
         user?.groupId != nil
     }
@@ -186,34 +193,124 @@ final class AppState: ObservableObject {
             return false
         }
         
-        // Проверяем, загружена ли группа
-        guard let group = GroupService.shared.group else {
-            // Если группа еще не загружена, предполагаем что пользователь активен
-            // чтобы не блокировать доступ из-за задержки загрузки
-            return false
+        // Проверка, загружена ли группа
+        if let group = GroupService.shared.group {
+            // Проверка, находится ли пользователь в списке ожидания и не находится в списке участников
+            return group.pendingMembers.contains(userId) && !group.members.contains(userId)
         }
         
-        // Проверяем, находится ли пользователь в списке ожидания
-        return group.pendingMembers.contains(userId)
+        // Если группа еще не загружена, делаем прямой запрос
+        do {
+            let groupDoc = try db.collection("groups").document(groupId).getDocument().wait()
+            
+            if let data = groupDoc.data() {
+                let pendingMembers = data["pendingMembers"] as? [String] ?? []
+                let members = data["members"] as? [String] ?? []
+                
+                return pendingMembers.contains(userId) && !members.contains(userId)
+            }
+        } catch {
+            print("AppState: ошибка проверки статуса ожидания: \(error.localizedDescription)")
+        }
+        
+        // По умолчанию предполагаем, что пользователь активен
+        return false
     }
 
-    // Check if user is a full member of the group
+    // Проверка, является ли пользователь полноправным участником группы
     var isActiveGroupMember: Bool {
-        guard let groupId = user?.groupId,
-              let userId = user?.id else {
+        guard let userId = user?.id,
+              let groupId = user?.groupId else {
             return false
         }
 
         // Если группа еще не загружена
-        if GroupService.shared.group == nil {
-            return false
+        if let group = GroupService.shared.group {
+            return group.members.contains(userId)
         }
-
-        // Проверяем, что пользователь в списке участников
-        if let members = GroupService.shared.group?.members {
-            return members.contains(userId)
+        
+        // Если группа еще не загружена, делаем прямой запрос
+        do {
+            let groupDoc = try db.collection("groups").document(groupId).getDocument().wait()
+            
+            if let data = groupDoc.data() {
+                let members = data["members"] as? [String] ?? []
+                return members.contains(userId)
+            }
+        } catch {
+            print("AppState: ошибка проверки активного членства: \(error.localizedDescription)")
         }
 
         return false
+    }
+    
+    // Получение статуса пользователя (для отображения в UI)
+    var userStatus: UserStatus {
+        if !isLoggedIn {
+            return .notLoggedIn
+        }
+        
+        if user?.groupId == nil {
+            return .noGroup
+        }
+        
+        if isPendingApproval {
+            return .pendingApproval
+        }
+        
+        return .active
+    }
+    
+    // Перечисление возможных статусов пользователя
+    enum UserStatus {
+        case notLoggedIn
+        case noGroup
+        case pendingApproval
+        case active
+    }
+}
+
+// Расширение для FirestoreDocument для синхронного получения документа (только для внутреннего использования)
+extension DocumentReference {
+    func getDocument() -> DocumentSnapshotTask {
+        return DocumentSnapshotTask(reference: self)
+    }
+}
+
+// Вспомогательный класс для имитации синхронного получения документа
+class DocumentSnapshotTask {
+    private let reference: DocumentReference
+    private var snapshot: DocumentSnapshot?
+    private var error: Error?
+    
+    init(reference: DocumentReference) {
+        self.reference = reference
+    }
+    
+    func wait() throws -> DocumentSnapshot {
+        let semaphore = DispatchSemaphore(value: 0)
+        
+        reference.getDocument { snapshot, error in
+            self.snapshot = snapshot
+            self.error = error
+            semaphore.signal()
+        }
+        
+        // Ожидаем завершения запроса (с таймаутом)
+        let result = semaphore.wait(timeout: .now() + 5)
+        
+        if result == .timedOut {
+            throw NSError(domain: "AppState", code: -1, userInfo: [NSLocalizedDescriptionKey: "Timeout waiting for document"])
+        }
+        
+        if let error = error {
+            throw error
+        }
+        
+        if let snapshot = snapshot, snapshot.exists {
+            return snapshot
+        }
+        
+        throw NSError(domain: "AppState", code: -1, userInfo: [NSLocalizedDescriptionKey: "Document not found"])
     }
 }

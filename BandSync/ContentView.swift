@@ -1,11 +1,4 @@
-//
-//  ContentView.swift
-//  BandSync
-//
-//  Created by Oleksandr Kuziakin on 31.03.2025.
-//  Updated by Claude AI on 31.03.2025.
-//
-
+// ContentView.swift - исправленная версия
 import SwiftUI
 
 struct ContentView: View {
@@ -13,45 +6,17 @@ struct ContentView: View {
     @State private var isRefreshing = false
 
     var body: some View {
-        VStack {
+        ZStack {
             if isRefreshing {
-                // Показать экран загрузки
                 ProgressView("Загрузка...")
             } else if !appState.isLoggedIn {
-                // Не вошел в систему
                 LoginView()
             } else if appState.user?.groupId == nil {
-                // Нет группы
                 GroupSelectionView()
+            } else if appState.isPendingApproval {
+                PendingApprovalView()
             } else {
-                // Пользователь имеет группу (как активный член или ожидает подтверждения)
-                // Временно разрешаем доступ всем для отладки
                 MainTabView()
-                    .overlay(
-                        // Если ожидает подтверждения, показываем уведомление
-                        Group {
-                            if appState.isPendingApproval {
-                                VStack {
-                                    Text("Статус: ожидание подтверждения")
-                                        .padding()
-                                        .background(Color.yellow.opacity(0.8))
-                                        .cornerRadius(8)
-                                    
-                                    // Вывод отладочной информации
-                                    Text("GroupID: \(appState.user?.groupId ?? "нет")")
-                                    Text("UserID: \(appState.user?.id ?? "нет")")
-                                    Text("Роль: \(appState.user?.role.rawValue ?? "нет")")
-                                    
-                                    if let group = GroupService.shared.group {
-                                        Text("В pendingMembers: \(group.pendingMembers.contains(appState.user?.id ?? "") ? "да" : "нет")")
-                                    } else {
-                                        Text("Группа не загружена")
-                                    }
-                                }
-                                .padding()
-                            }
-                        }
-                    )
             }
         }
         .onAppear {
