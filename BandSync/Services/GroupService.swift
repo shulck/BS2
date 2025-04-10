@@ -262,7 +262,7 @@ final class GroupService: ObservableObject {
         }
     }
     
-    // Улучшенная функция загрузки пользователей с фильтрацией невалидных ID
+    // Улучшенная функция загрузки пользователей с фиксированной обработкой результатов
     private func fetchUserBatch(userIds: [String], isActive: Bool) {
         // Фильтруем валидные ID пользователей
         let validUserIds = userIds.filter { !$0.isEmpty }
@@ -273,6 +273,16 @@ final class GroupService: ObservableObject {
             return
         }
         
+        // Очищаем соответствующий массив перед загрузкой новых пользователей
+        if isActive {
+            self.groupMembers = []
+        } else {
+            self.pendingMembers = []
+        }
+        
+        print("GroupService: начинаем загрузку \(validUserIds.count) пользователей (isActive: \(isActive))")
+        print("GroupService: ID пользователей для загрузки: \(validUserIds)")
+        
         let batchSize = 10
         var remainingIds = validUserIds
         
@@ -281,6 +291,9 @@ final class GroupService: ObservableObject {
             guard !remainingIds.isEmpty else {
                 DispatchQueue.main.async {
                     self.isLoading = false
+                    print("GroupService: загрузка завершена, активных: \(self.groupMembers.count), ожидающих: \(self.pendingMembers.count)")
+                    // Явно сообщаем о изменении объекта для обновления UI
+                    self.objectWillChange.send()
                 }
                 return
             }
@@ -319,7 +332,7 @@ final class GroupService: ObservableObject {
                         do {
                             // Try to decode as model
                             let user = try doc.data(as: UserModel.self)
-                            print("GroupService: successfully decoded user: \(user.name)")
+                            print("GroupService: successfully decoded user: \(user.name), id: \(user.id ?? "nil")")
                             return user
                         } catch {
                             print("GroupService: error decoding user: \(error.localizedDescription)")
@@ -334,7 +347,7 @@ final class GroupService: ObservableObject {
                                 let roleString = data["role"] as? String ?? "Member"
                                 let role = UserModel.UserRole(rawValue: roleString) ?? .member
                                 
-                                print("GroupService: manually created user: \(name)")
+                                print("GroupService: manually created user: \(name), id: \(id)")
                                 return UserModel(
                                     id: id,
                                     email: email,
@@ -352,8 +365,10 @@ final class GroupService: ObservableObject {
                         // Add users to appropriate arrays
                         if isActive {
                             self.groupMembers.append(contentsOf: users)
+                            print("GroupService: добавлено \(users.count) активных пользователей, всего: \(self.groupMembers.count)")
                         } else {
                             self.pendingMembers.append(contentsOf: users)
+                            print("GroupService: добавлено \(users.count) ожидающих пользователей, всего: \(self.pendingMembers.count)")
                         }
                         
                         // Process next batch
@@ -928,19 +943,50 @@ final class GroupService: ObservableObject {
                 let groupId = document.documentID
                 print("GroupService: found group: \(groupId)")
                 
+                // Проверяем, уже находится ли пользователь в группе или ожидает подтверждения
+                do {
+                    let group = try document.data(as: GroupModel.self)
+                    
+                    // Проверка, находится ли пользователь уже в группе
+                    if group.members.contains(userId) {
+                        DispatchQueue.main.async {
+                            self.isLoading = false
+                            self.errorMessage = "You are already a member of this group"
+                            let error = NSError(domain: "AlreadyMember", code: -1, userInfo: [NSLocalizedDescriptionKey: "You are already a member of this group"])
+                            completion(.failure(error))
+                        }
+                        return
+                    }
+                    
+                    // Проверка, находится ли пользователь уже в списке ожидания
+                    if group.pendingMembers.contains(userId) {
+                        DispatchQueue.main.async {
+                            self.isLoading = false
+                            self.errorMessage = "Your request is already pending approval"
+                            let error = NSError(domain: "AlreadyPending", code: -1, userInfo: [NSLocalizedDescriptionKey: "Your request is already pending approval"])
+                            completion(.failure(error))
+                        }
+                        return
+                    }
+                } catch {
+                    print("GroupService: error decoding group: \(error.localizedDescription)")
+                    // Продолжаем обработку, даже если не удалось декодировать группу
+                }
+                
                 // Batch update: add user to pendingMembers and update user profile
                 let batch = self.db.batch()
                 
-                // Update group
+                // Update group - всегда добавляем в pendingMembers, никогда в members
                 let groupRef = self.db.collection("groups").document(groupId)
                 batch.updateData([
                     "pendingMembers": FieldValue.arrayUnion([userId])
                 ], forDocument: groupRef)
                 
-                // Update user
+                // Update user - устанавливаем groupId но с ограниченным доступом
                 let userRef = self.db.collection("users").document(userId)
                 batch.updateData([
-                    "groupId": groupId
+                    "groupId": groupId,
+                    "role": UserModel.UserRole.member.rawValue // Устанавливаем роль как обычный участник
                 ], forDocument: userRef)
                 
                 batch.commit { error in
@@ -954,6 +1000,9 @@ final class GroupService: ObservableObject {
                         } else {
                             print("GroupService: join request sent successfully")
                             self.successMessage = "Join request sent. Waiting for approval."
+                            
+                            // Обновляем локальные данные
+                            self.fetchGroup(by: groupId)
                             
                             // Принудительно отправляем сигнал обновления UI
                             self.objectWillChange.send()

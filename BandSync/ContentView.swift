@@ -13,56 +13,58 @@ struct ContentView: View {
     @State private var isRefreshing = false
 
     var body: some View {
-        Group {
+        VStack {
             if isRefreshing {
-                // Show loading screen while checking auth state
-                LoadingView()
+                // Показать экран загрузки
+                ProgressView("Загрузка...")
             } else if !appState.isLoggedIn {
-                // Show login view if not logged in
+                // Не вошел в систему
                 LoginView()
-                    .transition(.opacity)
             } else if appState.user?.groupId == nil {
-                // User is logged in but doesn't have a group
+                // Нет группы
                 GroupSelectionView()
-                    .transition(.opacity)
             } else {
-                // User is logged in and has a group
+                // Пользователь имеет группу (как активный член или ожидает подтверждения)
+                // Временно разрешаем доступ всем для отладки
                 MainTabView()
-                    .transition(.opacity)
+                    .overlay(
+                        // Если ожидает подтверждения, показываем уведомление
+                        Group {
+                            if appState.isPendingApproval {
+                                VStack {
+                                    Text("Статус: ожидание подтверждения")
+                                        .padding()
+                                        .background(Color.yellow.opacity(0.8))
+                                        .cornerRadius(8)
+                                    
+                                    // Вывод отладочной информации
+                                    Text("GroupID: \(appState.user?.groupId ?? "нет")")
+                                    Text("UserID: \(appState.user?.id ?? "нет")")
+                                    Text("Роль: \(appState.user?.role.rawValue ?? "нет")")
+                                    
+                                    if let group = GroupService.shared.group {
+                                        Text("В pendingMembers: \(group.pendingMembers.contains(appState.user?.id ?? "") ? "да" : "нет")")
+                                    } else {
+                                        Text("Группа не загружена")
+                                    }
+                                }
+                                .padding()
+                            }
+                        }
+                    )
             }
         }
-        .animation(.easeInOut, value: appState.isLoggedIn)
-        .animation(.easeInOut, value: appState.user?.groupId)
         .onAppear {
             refreshState()
         }
     }
     
     private func refreshState() {
-        print("ContentView: refreshing state")
         isRefreshing = true
-        
-        // Force refresh auth state with completion handler
         appState.refreshAuthState {
-            // Add slight delay to allow UI to update smoothly
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
                 isRefreshing = false
-                print("ContentView: refresh completed - isLoggedIn: \(appState.isLoggedIn), hasGroup: \(appState.user?.groupId != nil)")
             }
-        }
-    }
-}
-
-// Loading view component
-struct LoadingView: View {
-    var body: some View {
-        VStack {
-            ProgressView()
-                .scaleEffect(1.5)
-            
-            Text("Loading...")
-                .font(.title2)
-                .padding()
         }
     }
 }

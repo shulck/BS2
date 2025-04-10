@@ -179,19 +179,22 @@ final class AppState: ObservableObject {
         user?.groupId != nil
     }
 
-    // Check if user is waiting for group approval
-    var isPendingGroupApproval: Bool {
-        guard let groupId = user?.groupId,
-              let userId = user?.id else {
+    // Проверка, ожидает ли пользователь подтверждения
+    var isPendingApproval: Bool {
+        guard let userId = user?.id,
+              let groupId = user?.groupId else {
             return false
         }
-
-        // Check if user ID is in the group's pendingMembers list
-        if let pendingMembers = GroupService.shared.group?.pendingMembers {
-            return pendingMembers.contains(userId)
+        
+        // Проверяем, загружена ли группа
+        guard let group = GroupService.shared.group else {
+            // Если группа еще не загружена, предполагаем что пользователь активен
+            // чтобы не блокировать доступ из-за задержки загрузки
+            return false
         }
-
-        return false
+        
+        // Проверяем, находится ли пользователь в списке ожидания
+        return group.pendingMembers.contains(userId)
     }
 
     // Check if user is a full member of the group
@@ -201,13 +204,12 @@ final class AppState: ObservableObject {
             return false
         }
 
-        // If group isn't loaded yet
+        // Если группа еще не загружена
         if GroupService.shared.group == nil {
-            // Exception for admins - they're always active
-            return user?.role == .admin
+            return false
         }
 
-        // Check if user ID is in the group's members list
+        // Проверяем, что пользователь в списке участников
         if let members = GroupService.shared.group?.members {
             return members.contains(userId)
         }
