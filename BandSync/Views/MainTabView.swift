@@ -132,7 +132,7 @@ struct MoreMenuView: View {
                 }
                 
                 // Settings (available to everyone)
-                NavigationLink(destination: NotificationSettingsView()) {
+                NavigationLink(destination: SettingsView()) {
                     Label("Settings", systemImage: "gear")
                 }
                 

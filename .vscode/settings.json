@@ -1,9 +1,5 @@
 {
-    "editor.quickSuggestions": {
-        "comments": "off",
-        "strings": "off",
-        "other": "off"
-    },
+    "editor.quickSuggestions": false,
     "xcodeIntegration.projectPath": "/Users/alex/Downloads/BandSync",
     "xcodeIntegration.xcodeProjectPath": "/Users/alex/Downloads/BandSync/BandSync.xcodeproj"
 }
