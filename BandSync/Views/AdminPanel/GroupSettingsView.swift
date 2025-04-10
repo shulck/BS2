@@ -3,7 +3,7 @@
 //  BandSync
 //
 //  Created by Oleksandr Kuziakin on 31.03.2025.
-//  Updated by Claude AI on 04.04.2025.
+//  Updated by Claude AI on 10.04.2025.
 //
 
 import SwiftUI
@@ -17,6 +17,7 @@ struct GroupSettingsView: View {
     @State private var showCodeChangeAlert = false
     @State private var showSuccessAlert = false
     @State private var showErrorAlert = false
+    @State private var showDeleteAlert = false
     @State private var alertMessage = ""
     @State private var isLoading = false
     @Environment(\.dismiss) var dismiss
@@ -119,6 +120,19 @@ struct GroupSettingsView: View {
                 }
             }
             
+            // Проверка на единственного администратора
+            if AppState.shared.user?.role == .admin {
+                let adminCount = groupService.groupMembers.filter { $0.role == .admin }.count
+                
+                if adminCount <= 1 {
+                    Section {
+                        Text("Вы единственный администратор. Пожалуйста, назначьте другого администратора перед удалением группы или выходом из нее.")
+                            .foregroundColor(.orange)
+                            .font(.caption)
+                    }
+                }
+            }
+            
             // Дополнительные действия
             if hasEditRights {
                 Section {
@@ -189,6 +203,14 @@ struct GroupSettingsView: View {
         } message: {
             Text(alertMessage)
         }
+        .alert("Удалить группу?", isPresented: $showDeleteAlert) {
+            Button("Отмена", role: .cancel) {}
+            Button("Удалить", role: .destructive) {
+                deleteGroup()
+            }
+        } message: {
+            Text("Вы уверены, что хотите полностью удалить группу? Это действие необратимо и приведет к потере всех данных группы.")
+        }
     }
     
     // Загрузить информацию о группе
@@ -206,7 +228,7 @@ struct GroupSettingsView: View {
                     // Создаем настройки по умолчанию, если их нет
                     self.settings = GroupModel.GroupSettings()
                 }
-                isLoading = false
+                self.isLoading = false
             }
         } else {
             isLoading = false
@@ -219,14 +241,16 @@ struct GroupSettingsView: View {
         
         isLoading = true
         groupService.updateGroupName(name) { success in
-            isLoading = false
-            
-            if success {
-                alertMessage = "Название группы обновлено"
-                showSuccessAlert = true
-            } else {
-                alertMessage = "Не удалось обновить название группы"
-                showErrorAlert = true
+            DispatchQueue.main.async {
+                self.isLoading = false
+                
+                if success {
+                    self.alertMessage = "Название группы обновлено"
+                    self.showSuccessAlert = true
+                } else {
+                    self.alertMessage = "Не удалось обновить название группы"
+                    self.showErrorAlert = true
+                }
             }
         }
     }
@@ -243,25 +267,32 @@ struct GroupSettingsView: View {
             Firestore.firestore().collection("groups").document(groupId).updateData([
                 "settings": data
             ]) { error in
-                isLoading = false
-                
-                if let error = error {
-                    alertMessage = "Ошибка обновления настроек: \(error.localizedDescription)"
-                    showErrorAlert = true
-                } else {
-                    self.settings = newSettings
+                DispatchQueue.main.async {
+                    self.isLoading = false
                     
-                    // Также обновляем локально хранимую группу
-                    if var updatedGroup = groupService.group {
-                        updatedGroup.settings = newSettings
-                        groupService.group = updatedGroup
+                    if let error = error {
+                        self.alertMessage = "Ошибка обновления настроек: \(error.localizedDescription)"
+                        self.showErrorAlert = true
+                    } else {
+                        self.settings = newSettings
+                        
+                        // Также обновляем локально хранимую группу
+                        if var updatedGroup = self.groupService.group {
+                            updatedGroup.settings = newSettings
+                            self.groupService.group = updatedGroup
+                            
+                            // Явно отправляем сигнал обновления
+                            self.groupService.objectWillChange.send()
+                        }
                     }
                 }
             }
         } catch {
-            isLoading = false
-            alertMessage = "Ошибка кодирования настроек: \(error.localizedDescription)"
-            showErrorAlert = true
+            DispatchQueue.main.async {
+                self.isLoading = false
+                self.alertMessage = "Ошибка кодирования настроек: \(error.localizedDescription)"
+                self.showErrorAlert = true
+            }
         }
     }
     
@@ -273,23 +304,23 @@ struct GroupSettingsView: View {
     
     // Показать предупреждение об удалении группы
     private func showDeleteGroupAlert() {
-        alertMessage = "Вы уверены, что хотите полностью удалить группу? Это действие необратимо и приведет к потере всех данных группы."
+        // Проверка, является ли пользователь единственным администратором
+        let adminCount = groupService.groupMembers.filter { $0.role == .admin }.count
         
-        let alert = UIAlertController(
-            title: "Удалить группу?",
-            message: alertMessage,
-            preferredStyle: .alert
-        )
-        
-        alert.addAction(UIAlertAction(title: "Отмена", style: .cancel))
-        alert.addAction(UIAlertAction(title: "Удалить", style: .destructive) { _ in
-            self.deleteGroup()
-        })
-        
-        if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
-           let rootViewController = windowScene.windows.first?.rootViewController {
-            rootViewController.present(alert, animated: true)
+        if adminCount <= 1 {
+            // Проверяем, есть ли другие участники
+            let memberCount = groupService.groupMembers.count
+            
+            if memberCount > 1 {
+                // Если есть другие участники, предупреждаем о необходимости назначить другого администратора
+                self.alertMessage = "Вы единственный администратор группы. Пожалуйста, назначьте другого администратора перед удалением группы."
+                self.showErrorAlert = true
+                return
+            }
         }
+        
+        // Если проверки пройдены, показываем диалог подтверждения
+        showDeleteAlert = true
     }
     
     // Удалить группу
@@ -320,9 +351,11 @@ struct GroupSettingsView: View {
         // Получить полную модель группы, чтобы иметь доступ ко всем участникам
         Firestore.firestore().collection("groups").document(groupId).getDocument { snapshot, error in
             if let error = error {
-                self.isLoading = false
-                self.alertMessage = "Ошибка получения данных группы: \(error.localizedDescription)"
-                self.showErrorAlert = true
+                DispatchQueue.main.async {
+                    self.isLoading = false
+                    self.alertMessage = "Ошибка получения данных группы: \(error.localizedDescription)"
+                    self.showErrorAlert = true
+                }
                 return
             }
             
@@ -334,22 +367,26 @@ struct GroupSettingsView: View {
                 clearUserGroupIds(members: allMembers) {
                     // Удалить группу
                     Firestore.firestore().collection("groups").document(groupId).delete { error in
-                        self.isLoading = false
-                        
-                        if let error = error {
-                            self.alertMessage = "Ошибка удаления группы: \(error.localizedDescription)"
-                            self.showErrorAlert = true
-                        } else {
-                            // Обновить состояние приложения
-                            AppState.shared.refreshAuthState()
-                            self.dismiss()
+                        DispatchQueue.main.async {
+                            self.isLoading = false
+                            
+                            if let error = error {
+                                self.alertMessage = "Ошибка удаления группы: \(error.localizedDescription)"
+                                self.showErrorAlert = true
+                            } else {
+                                // Обновить состояние приложения
+                                AppState.shared.refreshAuthState()
+                                self.dismiss()
+                            }
                         }
                     }
                 }
             } else {
-                self.isLoading = false
-                self.alertMessage = "Ошибка получения данных группы"
-                self.showErrorAlert = true
+                DispatchQueue.main.async {
+                    self.isLoading = false
+                    self.alertMessage = "Ошибка получения данных группы"
+                    self.showErrorAlert = true
+                }
             }
         }
     }

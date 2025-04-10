@@ -3,14 +3,7 @@
 //  BandSync
 //
 //  Created by Oleksandr Kuziakin on 31.03.2025.
-//
-
-
-//
-//  ModuleManagementView.swift
-//  BandSync
-//
-//  Created by Claude AI on 31.03.2025.
+//  Updated by Claude AI on 10.04.2025.
 //
 
 import SwiftUI
@@ -22,6 +15,10 @@ struct ModuleManagementView: View {
     @State private var isLoading = false
     @State private var errorMessage: String?
     @State private var successMessage: String?
+    @State private var showConfirmationAlert = false
+    @State private var moduleToToggle: ModuleType?
+    @State private var confirmationMessage = ""
+    @State private var isEnabling = false
     
     var body: some View {
         List {
@@ -48,11 +45,17 @@ struct ModuleManagementView: View {
                         Toggle("", isOn: Binding(
                             get: { enabledModules.contains(module) },
                             set: { newValue in
+                                // Вместо прямого изменения, сначала показываем подтверждение
+                                moduleToToggle = module
+                                isEnabling = newValue
+                                
                                 if newValue {
-                                    enabledModules.insert(module)
+                                    confirmationMessage = "Are you sure you want to enable the \(module.displayName) module?"
                                 } else {
-                                    enabledModules.remove(module)
+                                    confirmationMessage = "Are you sure you want to disable the \(module.displayName) module? Users will no longer have access to this functionality."
                                 }
+                                
+                                showConfirmationAlert = true
                             }
                         ))
                     }
@@ -96,6 +99,25 @@ struct ModuleManagementView: View {
         .onAppear {
             loadModuleSettings()
         }
+        .alert(isPresented: $showConfirmationAlert) {
+            Alert(
+                title: Text("Confirm Module Change"),
+                message: Text(confirmationMessage),
+                primaryButton: .default(Text("Continue")) {
+                    if let module = moduleToToggle {
+                        if isEnabling {
+                            enabledModules.insert(module)
+                        } else {
+                            enabledModules.remove(module)
+                        }
+                    }
+                },
+                secondaryButton: .cancel()
+            )
+        }
+        .refreshable {
+            loadModuleSettings()
+        }
     }
     
     // Load current module settings
@@ -136,8 +158,19 @@ struct ModuleManagementView: View {
         successMessage = nil
         errorMessage = nil
         
+        // Создаем словарь изменений для отслеживания и логирования
+        var changes: [String: Bool] = [:]
+        
         // For each module except Admin
         for module in modules where module != .admin {
+            // Определяем, было ли изменение
+            let wasEnabled = permissionService.getRolesWithAccess(to: module).isEmpty == false
+            let isNowEnabled = enabledModules.contains(module)
+            
+            if wasEnabled != isNowEnabled {
+                changes[module.displayName] = isNowEnabled
+            }
+            
             // Determine which roles should have access
             let roles: [UserModel.UserRole]
             
@@ -176,7 +209,17 @@ struct ModuleManagementView: View {
         // Delay to complete all update operations
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
             isLoading = false
-            successMessage = "Module settings successfully updated"
+            
+            // Формируем информативное сообщение об успехе
+            if changes.isEmpty {
+                successMessage = "No changes were made"
+            } else {
+                let changeMessages = changes.map { "\($0.key): \($0.value ? "enabled" : "disabled")" }
+                successMessage = "Module settings successfully updated.\nChanges: \(changeMessages.joined(separator: ", "))"
+            }
+            
+            // Загружаем обновленные настройки
+            self.loadModuleSettings()
         }
     }
 }

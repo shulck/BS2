@@ -262,10 +262,19 @@ final class GroupService: ObservableObject {
         }
     }
     
-    // Get user data with improved error handling
+    // Улучшенная функция загрузки пользователей с фильтрацией невалидных ID
     private func fetchUserBatch(userIds: [String], isActive: Bool) {
+        // Фильтруем валидные ID пользователей
+        let validUserIds = userIds.filter { !$0.isEmpty }
+        guard !validUserIds.isEmpty else {
+            DispatchQueue.main.async {
+                self.isLoading = false
+            }
+            return
+        }
+        
         let batchSize = 10
-        var remainingIds = userIds
+        var remainingIds = validUserIds
         
         // Function to process next batch
         func processNextBatch() {
@@ -432,6 +441,9 @@ final class GroupService: ObservableObject {
                             }
                         }
                     }
+                    
+                    // Принудительно отправляем сигнал обновления UI
+                    self?.objectWillChange.send()
                 }
             }
         }
@@ -487,6 +499,9 @@ final class GroupService: ObservableObject {
                         updatedGroup.pendingMembers.removeAll { $0 == userId }
                         self?.group = updatedGroup
                     }
+                    
+                    // Принудительно отправляем сигнал обновления UI
+                    self?.objectWillChange.send()
                 }
             }
         }
@@ -560,6 +575,9 @@ final class GroupService: ObservableObject {
                         self?.group = updatedGroup
                     }
                     
+                    // Принудительно отправляем сигнал обновления UI
+                    self?.objectWillChange.send()
+                    
                     completion?(true)
                 }
             }
@@ -596,6 +614,10 @@ final class GroupService: ObservableObject {
                     
                     // Update local data
                     self?.group?.name = newName
+                    
+                    // Принудительно отправляем сигнал обновления UI
+                    self?.objectWillChange.send()
+                    
                     completion?(true)
                 }
             }
@@ -632,6 +654,9 @@ final class GroupService: ObservableObject {
                     
                     // Update local data
                     self?.group?.code = String(newCode)
+                    
+                    // Принудительно отправляем сигнал обновления UI
+                    self?.objectWillChange.send()
                 }
             }
         }
@@ -685,12 +710,20 @@ final class GroupService: ObservableObject {
                             self?.groupMembers[memberIndex] = user
                         }
                     }
+                    
+                    // Принудительно отправляем сигнал обновления UI
+                    self?.objectWillChange.send()
+                    
+                    // Обновляем информацию о группе, чтобы отразить изменения
+                    if let groupId = self?.group?.id {
+                        self?.fetchGroup(by: groupId)
+                    }
                 }
             }
         }
     }
     
-    // Create new group
+    // Create new group с проверкой уникальности кода
     func createGroup(name: String, completion: @escaping (Result<String, Error>) -> Void) {
         guard let userId = AuthService.shared.currentUserUID(), !name.isEmpty else {
             print("GroupService: cannot create group, invalid parameters")
@@ -705,14 +738,66 @@ final class GroupService: ObservableObject {
         
         print("GroupService: creating new group: \(name)")
         
+        // Генерируем код и проверяем его уникальность
+        generateUniqueGroupCode { [weak self] result in
+            guard let self = self else { return }
+            
+            switch result {
+            case .success(let groupCode):
+                print("GroupService: generated unique code: \(groupCode)")
+                self.continueGroupCreation(name: name, userId: userId, groupCode: groupCode, completion: completion)
+                
+            case .failure(let error):
+                print("GroupService: error generating unique code: \(error.localizedDescription)")
+                DispatchQueue.main.async {
+                    self.isLoading = false
+                    self.errorMessage = "Error generating group code: \(error.localizedDescription)"
+                    completion(.failure(error))
+                }
+            }
+        }
+    }
+    
+    // Генерация уникального кода группы
+    private func generateUniqueGroupCode(attempts: Int = 0, completion: @escaping (Result<String, Error>) -> Void) {
+        // Ограничиваем количество попыток
+        guard attempts < 5 else {
+            let error = NSError(domain: "GroupCodeGeneration", code: -1, userInfo: [NSLocalizedDescriptionKey: "Failed to generate unique group code after multiple attempts"])
+            completion(.failure(error))
+            return
+        }
+        
         let groupCode = UUID().uuidString.prefix(6).uppercased()
         
+        // Проверяем, существует ли уже такой код
+        db.collection("groups")
+            .whereField("code", isEqualTo: String(groupCode))
+            .getDocuments { [weak self] snapshot, error in
+                if let error = error {
+                    completion(.failure(error))
+                    return
+                }
+                
+                if let documents = snapshot?.documents, !documents.isEmpty {
+                    // Код уже существует, генерируем новый и повторяем
+                    print("GroupService: generated code already exists, regenerating (attempt \(attempts + 1))")
+                    self?.generateUniqueGroupCode(attempts: attempts + 1, completion: completion)
+                    return
+                }
+                
+                // Код уникален
+                completion(.success(String(groupCode)))
+            }
+    }
+    
+    // Продолжаем создание группы с уникальным кодом
+    private func continueGroupCreation(name: String, userId: String, groupCode: String, completion: @escaping (Result<String, Error>) -> Void) {
         // Create default settings
         let settings = GroupModel.GroupSettings()
         
         let newGroup = GroupModel(
             name: name,
-            code: String(groupCode),
+            code: groupCode,
             members: [userId],
             pendingMembers: [],
             createdAt: Date(),
@@ -798,7 +883,7 @@ final class GroupService: ObservableObject {
             }
         }
     }
-    
+
     // Join existing group by code
     func joinGroup(code: String, completion: @escaping (Result<Void, Error>) -> Void) {
         guard let userId = AuthService.shared.currentUserUID(), !code.isEmpty else {
@@ -869,6 +954,10 @@ final class GroupService: ObservableObject {
                         } else {
                             print("GroupService: join request sent successfully")
                             self.successMessage = "Join request sent. Waiting for approval."
+                            
+                            // Принудительно отправляем сигнал обновления UI
+                            self.objectWillChange.send()
+                            
                             completion(.success(()))
                         }
                     }
@@ -917,6 +1006,12 @@ final class GroupService: ObservableObject {
                             completion(.failure(error))
                         } else {
                             print("GroupService: user invited successfully")
+                            
+                            // Принудительно отправляем сигнал обновления UI
+                            DispatchQueue.main.async {
+                                self?.objectWillChange.send()
+                            }
+                            
                             completion(.success(()))
                         }
                     }

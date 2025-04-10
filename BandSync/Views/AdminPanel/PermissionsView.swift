@@ -3,14 +3,7 @@
 //  BandSync
 //
 //  Created by Oleksandr Kuziakin on 31.03.2025.
-//
-
-
-//
-//  PermissionsView.swift
-//  BandSync
-//
-//  Created by Claude AI on 31.03.2025.
+//  Updated by Claude AI on 10.04.2025.
 //
 
 import SwiftUI
@@ -20,6 +13,8 @@ struct PermissionsView: View {
     @State private var selectedModule: ModuleType?
     @State private var showModuleEditor = false
     @State private var showResetConfirmation = false
+    @State private var showSuccessAlert = false
+    @State private var successMessage = ""
     
     var body: some View {
         List {
@@ -96,11 +91,23 @@ struct PermissionsView: View {
             Button("Cancel", role: .cancel) {}
             Button("Reset", role: .destructive) {
                 permissionService.resetToDefaults()
+                successMessage = "Permissions reset to default values"
+                showSuccessAlert = true
             }
         } message: {
             Text("This action will reset all permission settings to default values. Are you sure?")
         }
+        .alert("Success", isPresented: $showSuccessAlert) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(successMessage)
+        }
         .onAppear {
+            if let groupId = AppState.shared.user?.groupId {
+                permissionService.fetchPermissions(for: groupId)
+            }
+        }
+        .refreshable {
             if let groupId = AppState.shared.user?.groupId {
                 permissionService.fetchPermissions(for: groupId)
             }
@@ -124,6 +131,7 @@ struct ModulePermissionEditorView: View {
     let module: ModuleType
     @StateObject private var permissionService = PermissionService.shared
     @Environment(\.dismiss) var dismiss
+    @State private var showSuccessAlert = false
     
     // Local state of selected roles
     @State private var selectedRoles: Set<UserModel.UserRole> = []
@@ -185,6 +193,13 @@ struct ModulePermissionEditorView: View {
                 let currentRoles = permissionService.getRolesWithAccess(to: module)
                 selectedRoles = Set(currentRoles)
             }
+            .alert("Permissions Updated", isPresented: $showSuccessAlert) {
+                Button("OK") {
+                    dismiss()
+                }
+            } message: {
+                Text("Access settings for \(module.displayName) have been updated.")
+            }
         }
     }
     
@@ -203,6 +218,8 @@ struct ModulePermissionEditorView: View {
             moduleId: module,
             roles: Array(selectedRoles)
         )
-        dismiss()
+        
+        // Показываем сообщение об успехе
+        showSuccessAlert = true
     }
 }

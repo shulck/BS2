@@ -3,14 +3,7 @@
 //  BandSync
 //
 //  Created by Oleksandr Kuziakin on 04.04.2025.
-//
-
-
-//
-//  GroupDetailView.swift
-//  BandSync
-//
-//  Created by Claude AI on 04.04.2025.
+//  Updated by Claude AI on 10.04.2025.
 //
 
 import SwiftUI
@@ -36,7 +29,7 @@ struct GroupDetailView: View {
                 GroupHeaderView(
                     group: groupService.group,
                     isEditingName: $isEditingName,
-                    groupName: $groupName, 
+                    groupName: $groupName,
                     onSave: saveGroupName
                 )
                 
@@ -53,7 +46,7 @@ struct GroupDetailView: View {
                 // Код приглашения
                 if let group = groupService.group {
                     InvitationCodeView(
-                        code: group.code, 
+                        code: group.code,
                         onShare: { showingCodeShare = true },
                         onRegenerate: showRegenerateAlert
                     )
@@ -163,18 +156,30 @@ struct GroupDetailView: View {
         )
     }
     
+    // Улучшенное сохранение имени группы с лучшей обработкой ошибок
     private func saveGroupName() {
         guard !groupName.isEmpty else { return }
         
         isLoading = true
-        groupService.updateGroupName(groupName) { success in
-            isLoading = false
-            isEditingName = false
-            
-            if !success {
-                // Восстановить предыдущее имя в случае ошибки
-                if let originalName = groupService.group?.name {
-                    groupName = originalName
+        
+        // Сохраняем новое значение в локальную переменную
+        let newGroupName = groupName
+        
+        groupService.updateGroupName(newGroupName) { success in
+            DispatchQueue.main.async {
+                self.isLoading = false
+                self.isEditingName = false
+                
+                if !success {
+                    // Восстановить предыдущее имя в случае ошибки
+                    if let originalName = self.groupService.group?.name {
+                        self.groupName = originalName
+                    }
+                    
+                    // Показать ошибку пользователю
+                    self.alertTitle = "Ошибка"
+                    self.alertMessage = "Не удалось обновить название группы. Пожалуйста, попробуйте еще раз."
+                    self.showAlert = true
                 }
             }
         }
@@ -192,6 +197,7 @@ struct GroupDetailView: View {
         showAlert = true
     }
     
+    // Улучшенная функция выхода из группы с проверкой прав
     private func leaveGroup() {
         guard let userId = AppState.shared.user?.id,
               let groupId = AppState.shared.user?.groupId else { return }
@@ -213,19 +219,21 @@ struct GroupDetailView: View {
         
         // Удалить пользователя из группы
         groupService.removeUser(userId: userId) { success in
-            isLoading = false
-            
-            if success {
-                // Очистить groupId у пользователя
-                UserService.shared.clearUserGroup { _ in
-                    // Обновить состояние приложения
-                    AppState.shared.refreshAuthState()
-                    dismiss()
+            DispatchQueue.main.async {
+                self.isLoading = false
+                
+                if success {
+                    // Очистить groupId у пользователя
+                    UserService.shared.clearUserGroup { _ in
+                        // Обновить состояние приложения
+                        AppState.shared.refreshAuthState()
+                        dismiss()
+                    }
+                } else {
+                    alertTitle = "Ошибка"
+                    alertMessage = "Не удалось покинуть группу. Пожалуйста, попробуйте еще раз."
+                    showAlert = true
                 }
-            } else {
-                alertTitle = "Ошибка"
-                alertMessage = "Не удалось покинуть группу. Пожалуйста, попробуйте еще раз."
-                showAlert = true
             }
         }
     }
@@ -371,20 +379,20 @@ struct ActionButtonsView: View {
         HStack(spacing: 15) {
             ActionButton(
                 title: "Пригласить",
-                icon: "person.badge.plus", 
+                icon: "person.badge.plus",
                 action: onInvite
             )
             
             ActionButton(
                 title: "Настройки",
-                icon: "gear", 
+                icon: "gear",
                 action: onSettings
             )
             
             NavigationLink(destination: UsersListView()) {
                 ActionButton(
                     title: "Участники",
-                    icon: "person.3", 
+                    icon: "person.3",
                     action: {}
                 )
             }

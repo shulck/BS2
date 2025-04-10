@@ -3,7 +3,7 @@
 //  BandSync
 //
 //  Created by Oleksandr Kuziakin on 31.03.2025.
-//  Updated by Claude AI on 04.04.2025.
+//  Updated by Claude AI on 10.04.2025.
 //
 
 import SwiftUI
@@ -12,23 +12,28 @@ import FirebaseFirestore
 struct AdminPanelView: View {
     @StateObject private var groupService = GroupService.shared
     @StateObject private var userService = UserService.shared
+    @StateObject private var permissionService = PermissionService.shared
     @State private var showAlert = false
     @State private var alertMessage = ""
+    @State private var alertTitle = ""
     @State private var debugInfo: [String: Any] = [:]
+    @State private var isRefreshing = false
     
     var body: some View {
         NavigationView {
             List {
                 // Отладочная секция
-                Section(header: Text("Диагностика")) {
-                    ForEach(debugInfo.sorted(by: { $0.key < $1.key }), id: \.key) { key, value in
-                        HStack {
-                            Text(key)
-                                .font(.caption)
-                            Spacer()
-                            Text("\(String(describing: value))")
-                                .font(.caption)
-                                .foregroundColor(.secondary)
+                if AppState.shared.user?.role == .admin {
+                    Section(header: Text("Диагностика")) {
+                        ForEach(debugInfo.sorted(by: { $0.key < $1.key }), id: \.key) { key, value in
+                            HStack {
+                                Text(key)
+                                    .font(.caption)
+                                Spacer()
+                                Text("\(String(describing: value))")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
                         }
                     }
                 }
@@ -54,6 +59,11 @@ struct AdminPanelView: View {
                         title: "Участники в ожидании",
                         value: "\(groupService.pendingMembers.count)"
                     )
+                    
+                    StatisticRow(
+                        title: "Доступные модули",
+                        value: "\(permissionService.getCurrentUserAccessibleModules().count) из \(ModuleType.allCases.count)"
+                    )
                 }
                 
                 // Управление группой
@@ -69,6 +79,10 @@ struct AdminPanelView: View {
                     NavigationLink(destination: PermissionsView()) {
                         Label("Права доступа", systemImage: "lock.shield")
                     }
+                    
+                    NavigationLink(destination: GroupSettingsView()) {
+                        Label("Настройки группы", systemImage: "gear")
+                    }
                 }
                 
                 // Действия
@@ -76,16 +90,50 @@ struct AdminPanelView: View {
                     Button(action: fetchCompleteGroupInfo) {
                         Label("Обновить информацию о группе", systemImage: "arrow.clockwise")
                     }
+                    .disabled(isRefreshing)
                     
                     Button(action: regenerateGroupCode) {
                         Label("Сгенерировать новый код приглашения", systemImage: "arrow.2.squarepath")
+                    }
+                    .disabled(isRefreshing)
+                }
+                
+                Spacer(minLength: 30)
+                
+                // Дополнительная секция для информации о правах
+                if AppState.shared.user?.role == .admin {
+                    Section(header: Text("Разрешения")) {
+                        VStack(alignment: .leading, spacing: 10) {
+                            Text("Текущие права доступа:")
+                                .font(.subheadline)
+                            
+                            ForEach(permissionService.getCurrentUserAccessibleModules(), id: \.self) { module in
+                                HStack {
+                                    Image(systemName: module.icon)
+                                        .foregroundColor(.blue)
+                                    
+                                    Text(module.displayName)
+                                        .font(.caption)
+                                    
+                                    Spacer()
+                                    
+                                    // Показываем, какие роли имеют доступ
+                                    let roles = permissionService.getRolesWithAccess(to: module)
+                                    Text(roles.map { $0.rawValue.prefix(1) }.joined(separator: ", "))
+                                        .font(.caption)
+                                        .foregroundColor(.secondary)
+                                }
+                                .padding(.vertical, 2)
+                            }
+                        }
+                        .padding(.vertical, 4)
                     }
                 }
             }
             .navigationTitle("Панель администратора")
             .alert(isPresented: $showAlert) {
                 Alert(
-                    title: Text("Информация"),
+                    title: Text(alertTitle),
                     message: Text(alertMessage),
                     dismissButton: .default(Text("OK"))
                 )
@@ -94,8 +142,18 @@ struct AdminPanelView: View {
                 loadAdminPanelData()
             }
             .refreshable {
-                loadAdminPanelData()
+                await refreshData()
             }
+            .overlay(
+                Group {
+                    if isRefreshing {
+                        ProgressView()
+                            .padding()
+                            .background(Color.white.opacity(0.7))
+                            .cornerRadius(8)
+                    }
+                }
+            )
         }
     }
     
@@ -113,6 +171,7 @@ struct AdminPanelView: View {
         
         // Загрузка информации о группе
         guard let groupId = AppState.shared.user?.groupId else {
+            alertTitle = "Ошибка"
             alertMessage = "Не удалось определить группу"
             showAlert = true
             return
@@ -120,6 +179,9 @@ struct AdminPanelView: View {
         
         // Расширенная загрузка группы
         groupService.fetchGroup(by: groupId)
+        
+        // Загрузка прав доступа
+        permissionService.fetchPermissions(for: groupId)
         
         // Дополнительная диагностика
         Task {
@@ -144,32 +206,102 @@ struct AdminPanelView: View {
                 debugInfo["Количество ожидающих"] = pendingMembers.count
                 
                 // Список ID участников для отладки
-                debugInfo["ID участников"] = members.joined(separator: ", ")
+                debugInfo["ID участников"] = members.prefix(3).joined(separator: ", ") + (members.count > 3 ? "..." : "")
             }
         } catch {
             debugInfo["Ошибка загрузки"] = error.localizedDescription
         }
     }
     
+    // Асинхронная функция для обновления данных при pull-to-refresh
+    private func refreshData() async {
+        isRefreshing = true
+        
+        guard let groupId = AppState.shared.user?.groupId else {
+            isRefreshing = false
+            return
+        }
+        
+        // Ожидаем выполнения всех операций параллельно
+        await withTaskGroup(of: Void.self) { group in
+            // Обновляем информацию о группе
+            group.addTask {
+                await withCheckedContinuation { continuation in
+                    groupService.fetchGroup(by: groupId) { _ in
+                        continuation.resume()
+                    }
+                }
+            }
+            
+            // Обновляем разрешения
+            group.addTask {
+                await withCheckedContinuation { continuation in
+                    DispatchQueue.main.async {
+                        permissionService.fetchPermissions(for: groupId)
+                        continuation.resume()
+                    }
+                }
+            }
+            
+            // Обновляем дополнительную информацию
+            group.addTask {
+                await fetchDetailedGroupInfo(groupId: groupId)
+            }
+        }
+        
+        // Обновляем UI
+        DispatchQueue.main.async {
+            self.isRefreshing = false
+            
+            self.alertTitle = "Успех"
+            self.alertMessage = "Информация обновлена"
+            self.showAlert = true
+        }
+    }
+    
     private func fetchCompleteGroupInfo() {
         guard let groupId = AppState.shared.user?.groupId else {
+            alertTitle = "Ошибка"
             alertMessage = "Не удалось определить группу"
             showAlert = true
             return
         }
         
-        // Принудительное обновление всех данных
-        groupService.fetchGroup(by: groupId)
+        isRefreshing = true
         
-        alertMessage = "Информация обновлена"
-        showAlert = true
+        // Принудительное обновление всех данных
+        groupService.fetchGroup(by: groupId) { _ in
+            // Обновляем разрешения
+            DispatchQueue.main.async {
+                permissionService.fetchPermissions(for: groupId)
+                
+                // Дополнительная диагностика
+                Task {
+                    await self.fetchDetailedGroupInfo(groupId: groupId)
+                    
+                    DispatchQueue.main.async {
+                        self.isRefreshing = false
+                        self.alertTitle = "Успех"
+                        self.alertMessage = "Информация обновлена"
+                        self.showAlert = true
+                    }
+                }
+            }
+        }
     }
     
     private func regenerateGroupCode() {
+        isRefreshing = true
+        
         groupService.regenerateCode()
         
-        alertMessage = "Создан новый код приглашения"
-        showAlert = true
+        // Задержка для обновления UI
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+            self.isRefreshing = false
+            self.alertTitle = "Успех"
+            self.alertMessage = "Создан новый код приглашения"
+            self.showAlert = true
+        }
     }
 }
 
